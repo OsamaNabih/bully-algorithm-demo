@@ -5,6 +5,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.sql.Timestamp;
 
 public class Network {
 	String address = Consts.ip;
@@ -24,11 +25,15 @@ public class Network {
 				acquiredPort = true;
 				System.out.println("Acquired port " + String.valueOf(i));
 			} catch(Exception e) {
-				System.out.println("Error: " + e.toString());
-				System.out.println("Failed to acquire port " + String.valueOf(i));
+				//System.out.println("Error: " + e.toString());
+				//System.out.println("Failed to acquire port " + String.valueOf(i));
 				i++;
 			}
 		}
+	}
+	
+	private long getCurrTimestamp() {
+		return new Timestamp(System.currentTimeMillis()).getTime();
 	}
 	
 	private void bind(int port) throws IOException {
@@ -47,7 +52,7 @@ public class Network {
 			DataInputStream receivedDataStream = new DataInputStream(s.getInputStream());
 			String receivedData = receivedDataStream.readUTF();
 			Message receivedMsg = new Message(receivedData);
-			System.out.println("Received message :  " + receivedMsg.print() + " from " + receivedMsg.getSenderPort());
+			System.out.println("timestamp: " + getCurrTimestamp() + ", Received :  " + receivedMsg.print());
 			CustomPair pair = new CustomPair(s, receivedMsg);
 			return pair;
 		} catch (Exception e) {
@@ -72,12 +77,12 @@ public class Network {
 			Socket s= receiverSocket.accept(); 
             DataInputStream receivedDataStream = new DataInputStream(s.getInputStream());
             DataOutputStream sentDataStream = new DataOutputStream(s.getOutputStream());
-            System.out.println("Receiving and sending");
+            //System.out.println("Receiving and sending");
             String receivedData = receivedDataStream.readUTF();
             Message receivedMsg = new Message(receivedData);
-            System.out.println("Received message :  " + receivedMsg.print() + " from " + receivedMsg.getSenderPort());
+            //System.out.println("Received message :  " + receivedMsg.print() + " from " + receivedMsg.getSenderPort());
             Message sentMsg = node.getAppropriateResponse(receivedMsg);
-            System.out.println("Responded with " + sentMsg.print() + " to " + receivedMsg.getSenderPort());
+            //System.out.println("Responded with " + sentMsg.print() + " to " + receivedMsg.getSenderPort());
             sentDataStream.writeUTF(sentMsg.toString());
             sentDataStream.flush();
             sentDataStream.close();
@@ -96,17 +101,17 @@ public class Network {
 			DataOutputStream sentDataStream = new DataOutputStream(s.getOutputStream());
 			sentDataStream.writeUTF(msg.toString());
 			sentDataStream.flush();
-			System.out.println("Sent message " + msg.print() + " to " + targetPort);
+			//System.out.println("Sent " + msg.print() + " to " + targetPort);
 			DataInputStream receivedDataStream = new DataInputStream(s.getInputStream());
 			String receivedData = receivedDataStream.readUTF();
 			Message receivedMsg = parseResponse(receivedData);
-			System.out.println("Received response message :  " + receivedMsg.print() + " from " + receivedMsg.getSenderPort());
+			//System.out.println("Received response :  " + receivedMsg.print());
 			sentDataStream.close();
 			receivedDataStream.close();
 			s.close();
 			return receivedMsg;
 		} catch(Exception e) {
-			System.out.println("Error: " + e.toString());
+			//System.out.println("Error: " + e.toString());
 			return null;
 		}	
 	}

@@ -13,6 +13,6 @@ public class Consts {
 	public static int pendingVictoryTimeout = 10000;
 	public static int coordinatorDeadTimeout = 7000;
 	public static int aliveTimeout = 2000;
-	public static int maxNumOfNodes = 3;
+	public static int maxNumOfNodes = 5;
 	//public static int 
 }
