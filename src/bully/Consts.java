@@ -11,10 +11,10 @@ public class Consts {
 	public static String host = "localhost";
 	public static String ip = "127.0.0.1";
 	
-	public static int generalTimeout = 2000;
-	public static int aliveInterval = 3000;
+	public static int generalTimeout = 3000;
+	public static int aliveInterval = 4000;
 	public static int coordinatorDeadTimeout = (int)(aliveInterval * 2.5);
-	public static int waitingForTaskResponseTimeout = 4000;
+	public static int waitingForTaskResponseTimeout = 2*aliveInterval;
 	public static int taskTimeout = 0;
 	
 	// defined as separate variables for more configurability
@@ -29,7 +29,7 @@ public class Consts {
 	
 	
 	public static int randomArrSize = 100;
-	public static int maxInt = 10000;
+	public static int maxInt = 1000;
 	
 	
 	
