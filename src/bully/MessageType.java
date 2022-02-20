@@ -1,10 +1,12 @@
 package bully;
 
 public enum MessageType {
-	OK, // Dummy ACK
+	OK, // Dummy ACK to avoid prematurely closing socket before receiver consumed the content
 	GREETING,
 	ELECTION,
 	ANSWER,
 	ALIVE,
-	VICTORY
+	VICTORY,
+	TASK,
+	TASK_REPLY,
 }

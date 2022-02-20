@@ -6,10 +6,14 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 public class Node {
 	Network mySocket;
@@ -18,12 +22,28 @@ public class Node {
 	long pid;
 	Peer coordinator;
 	boolean isCoordinator = false;
-	AtomicLong lastPendingVictoryTime = new AtomicLong(0);
+	
+	// RUNNING state variables
 	AtomicLong lastAliveTime = new AtomicLong(0);
 	Thread aliveTimeoutCheckerThread = null;
-	Timer victoryTimer = null;
+	Thread taskThread = null;
+	int chunkMin = Consts.maxInt;
+	
+	// ELECTING state variables
 	boolean isLargest = true;
+	
+	// PENDING VICTORY state variables
+	AtomicLong lastPendingVictoryTime = new AtomicLong(0);
+	Timer victoryTimer = null;
+	
+	// COORDINATING state variables
 	List<Thread> aliveThreads = new ArrayList<>();
+	List<Thread> taskThreads = new ArrayList<>();
+	AtomicInteger expectedReplies = new AtomicInteger();
+	int actualReplies = 0;
+	boolean taskReplyTimeout = false;
+	Timer taskDeadline = null;
+	int min = Consts.maxInt;
 	
 	
 	private long getCurrTimestamp() {
@@ -103,6 +123,29 @@ public class Node {
 				transitionToRunning();
 				break;
 			}
+			// We've received a task from the coordinator
+			case TASK: {
+				spawnFindMinThread(receivedMsg);
+				
+				break;
+			}
+			case TASK_REPLY: {
+				// If we're no longer coordinating, result is meaningless, ignore it
+				if (state != NodeState.COORDINATING)
+					break;
+				this.min = Math.min(min, Integer.valueOf(receivedMsg.getContent()));
+				actualReplies += 1;
+				if (actualReplies == expectedReplies.get() 
+					|| actualReplies == peers.size()) {
+					System.out.println("Task finished with minimum: " + String.valueOf(this.min));
+				}
+				else if (this.taskReplyTimeout) {
+					System.out.println("Not all nodes responsed, task timed out");
+					System.out.println("Minimum response received: " + String.valueOf(this.min));
+				}
+				break;
+			}
+			
 			// OK and ANSWER cases will never happen as no node initiates sending them
 			// GREETING case doesn't change state, we simply add a peer as we always do if we receive a message
 			// from any peer that didn't exist previously
@@ -115,19 +158,7 @@ public class Node {
 	public Message getMessageResponse(Message receivedMsg) {
 		long senderPid = Long.valueOf(receivedMsg.getSenderPid());
 		switch (receivedMsg.getType()) {
-			case GREETING: {
-				//System.out.println("Received GREETING, replying with OK");
-				Message sentMsg = new Message(MessageType.OK, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid));
-				return sentMsg;
-			}
-			case ALIVE: {
-				//System.out.println("Received ALIVE, replying with OK");
-				this.lastAliveTime.set(getCurrTimestamp());
-				Message sentMsg = new Message(MessageType.OK, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid));
-				return sentMsg;
-			}
 			case ELECTION: {
-				//System.out.println("Received ELECTION, replying with ANSWER");
 				// If we are pending victory or the sender has higher pid
 				// Don't reply with ANSWER message
 				if (state == NodeState.PENDING_VICTORY || senderPid > this.pid) {
@@ -138,18 +169,12 @@ public class Node {
 					Message sentMsg = new Message(MessageType.ANSWER, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid));
 					return sentMsg;
 				}
-				
-				
 			}
-			case VICTORY: {
-				//System.out.println("Received VICTORY, replying with OK");
+			// Send an OK (ACK) to alert sender we received the message
+			default: 
 				Message sentMsg = new Message(MessageType.OK, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid));
 				return sentMsg;
 			}
-			default: // OK and ANSWER cases will never happen as no node initiates sending them
-				break;
-			}
-		return null;
 	}
 		
 	// This function iterates over all possibly occupied ports
@@ -505,6 +530,137 @@ public class Node {
         }
 	}
 	
+	void taskDeadlineTimer() {
+		taskDeadline = new Timer();
+		TimerTask taskTimeout = new TimerTask() {
+			@Override
+			public void run() {
+				taskReplyTimeout = true;
+			}
+		};
+		taskDeadline.schedule(taskTimeout, Consts.waitingForTaskResponseTimeout);
+	}
+	
+	List<Integer> generateRandomIntArray(int N, int max) {
+		List<Integer> randomInts = IntStream.generate(() -> new Random().nextInt(max)).limit(N).boxed().collect(Collectors.toList());
+		
+		return randomInts;
+	}
+	
+	Thread spawnTaskThread(Peer targetPeer, List<Integer> nums) {
+		String chunk = buildNumsString(nums);
+		Message msg = new Message(MessageType.TASK, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid), chunk);
+		Thread thread = new Thread(new Runnable() {
+			@Override
+			public void run() {
+				
+				//System.out.println("Sending chunk: " + chunk + " to peer: " + targetPeer.getPort());
+				Message responseMsg = mySocket.sendAndReceive(Consts.ip, targetPeer.getPort(), msg, Consts.taskTimeout);
+				// Don't need to remove the failed peer as the alive thread handles that
+				// So we just return
+				if (responseMsg == null) {
+					System.out.println("Peer " + targetPeer.getPort() + " has failed");
+					removePeer(targetPeer);
+					return;
+				}
+				// If we receive a reply, then the task was sent successfully
+				// We increment our count of expected replies
+				expectedReplies.getAndIncrement();
+			}
+		});
+		thread.start();
+		return thread;
+	}
+	
+	String buildNumsString(List<Integer> nums) {
+		StringBuilder str = new StringBuilder("");
+		for(int i = 0; i < nums.size(); i++) {
+			str.append(String.valueOf(nums.get(i)));
+			if (i != nums.size() - 1)
+				str.append(",");
+		}
+		return str.toString();
+	}
+	
+	void spawnTaskCoordinatorThread() {
+		//System.out.println("Sending task to peers");
+		Thread thread = new Thread(new Runnable() {
+			@Override
+			public void run() {
+				// Give the alive thread a chance to detect failing nodes
+				try {
+					Thread.sleep((long)(Consts.aliveTimeout*1.5));
+				} catch (InterruptedException e1) {
+					
+				}
+				List<Integer> randomNums = generateRandomIntArray(Consts.randomArrSize, Consts.maxInt);
+				//System.out.println("Generated random ints: " + randomNums.toString());
+				int peerIdx = 0;
+				int peerCount = peers.size();
+				int chunkSize = Math.max((int)Math.ceil(1.0*randomNums.size() / peerCount), 1);
+				//AtomicInteger min = new AtomicInteger(Consts.maxInt);
+				for(Peer peer : peers.values()) {
+					int startIdx = peerIdx * chunkSize;
+					int endIdx = Math.min((peerIdx + 1) * chunkSize, randomNums.size()); // Exclusive
+					//System.out.println("Peer" + peerCount + " start: " + startIdx + ", end: " + endIdx);
+					if (startIdx >= randomNums.size()) // more processes than nums
+						break;
+					List<Integer> chunk = randomNums.subList(startIdx, endIdx);
+					Thread taskThread = spawnTaskThread(peer, chunk);
+					taskThreads.add(taskThread);
+					peerIdx += 1;
+				}
+				for(Thread thread : taskThreads) {
+					try {
+						thread.join();
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						//e.printStackTrace();
+					}
+				}
+				// Any task reply sent after this time is ignored
+				// The answer is considered the minimum response we received till that deadline
+				taskDeadlineTimer();
+				if (state != NodeState.COORDINATING)
+					return;
+				//System.out.println("Minimum is: " + min.get());
+			}
+		});
+		thread.start();
+	}
+	
+	void startTask() {
+		// Spawn a new thread to handle sending so as not to block our receiver loop
+		spawnTaskCoordinatorThread(); 
+	}
+	
+	void spawnFindMinThread(Message receivedMsg) {
+		this.chunkMin = Consts.maxInt;
+		Thread findMinThread = new Thread(new Runnable() {
+			@Override
+			public void run() {
+				String numsArrayString = receivedMsg.getContent();
+				// Remove lading '[' and trailing ']'
+				//String numsArray = numsArrayString.substring(1, numsArrayString.length() - 1);
+				//System.out.println("Received chunk: " + numsArrayString);
+				String[] nums = numsArrayString.split(",");
+				for(String s : nums) {
+					int num = Integer.parseInt(s);
+					chunkMin = Math.min(num, chunkMin);
+				}
+				
+				// If state was changed, don't bother sending it
+				// Even if it were sent, the receiver would ignore it
+				// But it's better to pre-empt it to avoid loading the network
+				if (state != NodeState.RUNNING || Thread.currentThread().isInterrupted())
+					return;
+				Message msg = new Message(MessageType.TASK_REPLY, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(pid), String.valueOf(chunkMin));
+				mySocket.sendAndReceive(Consts.ip, coordinator.port, msg, Consts.taskTimeout);
+			}
+		});
+		findMinThread.start();
+	}
+	
 	//---------------------------------------State transitions----------------------------------
 	
 	void transitionToRunning() {
@@ -515,6 +671,8 @@ public class Node {
 	
 	void exitRunning() {
 		aliveTimeoutCheckerThread.interrupt();
+		if (taskThread != null)
+			taskThread.interrupt();
 		//System.out.println("-------------------------------");
 	}
 	
@@ -545,16 +703,28 @@ public class Node {
 	void transitionToCoordinating() {
 		System.out.println("Becoming the COORDINATOR");
 		this.isCoordinator = true;
+		this.min = Consts.maxInt;
 		state = NodeState.COORDINATING;
-		broadcastVictory();
-		sendAlive();
+		taskReplyTimeout = false;
+		taskDeadline = null;
+		expectedReplies.set(0);
+		actualReplies = 0;
+		if (peers.size() > 0) {
+			broadcastVictory();
+			sendAlive();
+			startTask();
+		}
+		
 	}
 	
 	void exitCoordinating() {
 		this.isCoordinator = false;
 		for(Thread aliveThread : aliveThreads)
 			aliveThread.interrupt();
-		
+		for(Thread taskThread : taskThreads)
+			taskThread.interrupt();
+		if (this.taskDeadline != null)
+			this.taskDeadline.cancel();
 	}
 	
 	void exitCurrentState() {
