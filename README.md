@@ -1,6 +1,7 @@
 # bully-algorithm-demo
 Java implementation of the Bully Algorithm for determining a Coordinator in a distributed network. <br>
-All configuration is defined inside "Consts.java" file.
+All configuration is defined inside "Consts.java" file. <br>
+Feel free to play around with the parameters.
 
 ## Limitations/Assumptions
 - There's a finite number of N nodes (where N can be arbitrarily large).
@@ -87,3 +88,7 @@ Important information is also logged, such as
 
 ## Output Example
 ![image info](./pictures/Example.png)
+
+## NOTES
+I made decent refactoring effort to the code, by making a <b>State</b> abstract class and having <b>Init, Running, Electing, PendingVictory, and Coordinating</b> inherit from it, hence splitting the logic of each state entirely. <br>
+This resulted in a <b>much</b> cleaner code, unfortunately I didn't have the time to test it.
