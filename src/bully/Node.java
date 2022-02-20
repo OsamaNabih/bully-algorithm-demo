@@ -287,48 +287,57 @@ public class Node {
 			
 	}
 	
-//	void initElections() {
-//		System.out.println("Initiating elections");
-//		
-//		List<Peer> failedPeers = Collections.synchronizedList(new ArrayList<Peer>());
-//		List<Thread> electionThreads = new ArrayList<>();
-//		Node node = this;
-//		for(Peer peer : peers.values()) {
-//			if (peer.getPid() < this.pid && peer.getPid() != 0)
-//				continue;
-//			Thread electionThread = spawnElectionThread(node, failedPeers, peer);
-//			electionThreads.add(electionThread);
-//			
-//		}
-//		
-//		// Wait for all outgoing threads to finish
-//		for(Thread electionThread : electionThreads) {
-//			try {
-//				electionThread.join();
-//			} catch (InterruptedException e) {
-//				// TODO Auto-generated catch block
-//				continue;
-//				//e.printStackTrace();
-//			}
-//		}
-//		synchronized(failedPeers) {
-//			if (failedPeers.size() > 0) {
-//				Iterator<Peer> it = failedPeers.iterator();
-//				while(it.hasNext()) {
-//					Peer peer = it.next();
-//					removePeer(peer);
-//				}
-//			}
-//		}
-//		// If we received answers from all other nodes
-//		// and we didn't go to pending victory, then we are the coordinator
-//		if (node.state == NodeState.ELECTING && this.isLargest) {
-//			System.out.println("SURVIVED TILL THE END OF ELECTION");
-			//exitCurrentState();
-//			transitionToCoordinating();
-//		}
-//			
-//	}
+	/*
+	 * Initially I wanted the election process to be concurrent to avoid delays due to awaiting timeouts
+	 * However this proved to be of harm to the amount of messages sent, as it becomes harder to
+	 * stop electing myself upon receiving an ANSWER from a higher node
+	 * It also added redundant messages flooding the network due to threads not immediately
+	 * seeing the changed state
+	 * These redundant messages made the network unnecessarily start ELECTION process several times
+	 * before reaching a steady state 
+	 * So I opted for a sequential approach,
+	void initElections() {
+		System.out.println("Initiating elections");
+		
+		List<Peer> failedPeers = Collections.synchronizedList(new ArrayList<Peer>());
+		List<Thread> electionThreads = new ArrayList<>();
+		Node node = this;
+		for(Peer peer : peers.values()) {
+			if (peer.getPid() < this.pid && peer.getPid() != 0)
+				continue;
+			Thread electionThread = spawnElectionThread(node, failedPeers, peer);
+			electionThreads.add(electionThread);
+			
+		}
+		
+		// Wait for all outgoing threads to finish
+		for(Thread electionThread : electionThreads) {
+			try {
+				electionThread.join();
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				continue;
+				//e.printStackTrace();
+			}
+		}
+		synchronized(failedPeers) {
+			if (failedPeers.size() > 0) {
+				Iterator<Peer> it = failedPeers.iterator();
+				while(it.hasNext()) {
+					Peer peer = it.next();
+					removePeer(peer);
+				}
+			}
+		}
+		// If we received answers from all other nodes
+		// and we didn't go to pending victory, then we are the coordinator
+		if (node.state == NodeState.ELECTING && this.isLargest) {
+			System.out.println("SURVIVED TILL THE END OF ELECTION");
+			exitCurrentState();
+			transitionToCoordinating();
+		}
+	}
+	*/
 	
 	Thread spawnElectionThread(Node node, List<Peer> failedPeers, Peer targetPeer) {
 		Message msg = new Message(MessageType.ELECTION, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid));
@@ -369,13 +378,16 @@ public class Node {
 		TimerTask victoryTimeout = new TimerTask() {
 			@Override
 			public void run() {
-				// If we still haven't transitioned from pending victory
-				// Then we didn't receive a victory in the designated timeout period
-				// Go back to Electing state and start a new election
-				// We need to check both the state and the timer difference
-				// To avoid the case of changing states quickly 
-				// To coordinating, then electing, then again to pending victory
-				// Then this timer expires as it was spawned from the previous time we were in pending victory
+				/*
+				 If we still haven't transitioned from pending victory
+				 Then we didn't receive a victory in the designated timeout period
+				 Go back to Electing state and start a new election
+				 We need to check both the state and the timer difference
+				 To avoid the case of changing states quickly 
+				 To coordinating, then electing, then again to pending victory
+				 Then this timer expires as it was spawned from the previous time we were in pending victory
+				 */
+				
 				if (node.state == NodeState.PENDING_VICTORY && (node.getCurrTimestamp() - lastPendingVictoryTime.get()) > Consts.pendingVictoryTimeout) {
 					System.out.println("Pending victory timed out, starting new election");
 					exitCurrentState();
@@ -440,6 +452,13 @@ public class Node {
 		}
 	}
 	
+	/*
+	 * This function starts a thread for the peer at the target port
+	 * This thread periodically sends ALIVE messages to that peer
+	 * Informing them that the coordinator is still alive
+	 * @targetPort: port to send the message to
+	 * @msg: message to be sent
+	 */
 	Thread spawnAliveThread(int targetPort, Message msg) {
 		Node node = this;
 		Thread t = new Thread(new Runnable() {
@@ -470,6 +489,13 @@ public class Node {
         return t;
 	}
 	
+	/*
+	 * This function starts an independent thread for each peer
+	 * This is more accurate than doing them sequentially as we won't be delayed by timeouts from failing peers
+	 * However this might produce a lot of overhead if the number of peers is large
+	 * and the RATE OF FAILURE is small
+	 * This tradeoff should be taken into consideration in a real environment
+	 */
 	void sendAlive() {
 		System.out.println("Sending periodic ALIVE to all peers");
 		Message msg = new Message(MessageType.ALIVE, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid));
@@ -478,6 +504,8 @@ public class Node {
             aliveThreads.add(aliveThread);
         }
 	}
+	
+	//---------------------------------------State transitions----------------------------------
 	
 	void transitionToRunning() {
 		//System.out.println("Transitioning to state: RUNNING");
@@ -492,11 +520,8 @@ public class Node {
 	
 	void transitionToElecting() {
 		//System.out.println("Transitioning to state: ELECTING");
-		// Only initiate election process if we have discovered all possible peers
 		state = NodeState.ELECTING;
 		this.isLargest = true;
-		//sentElectionsCount = 0;
-		//receivedElectionsCount = 0;
 		initElections();
 	}
 	
@@ -518,7 +543,6 @@ public class Node {
 	
 	
 	void transitionToCoordinating() {
-		
 		System.out.println("Becoming the COORDINATOR");
 		this.isCoordinator = true;
 		state = NodeState.COORDINATING;
@@ -594,6 +618,10 @@ public class Node {
 		peers.remove(peer.getPort());
 	}
 	
+	/*
+	 * We could also add a HEAP structure of the PIDs to get the highest pid in O(1)
+	 * Space vs Time tradeoff
+	 */
 	long getHighestPid() {
 		long highestPid = 0;
 		for(Peer peer : peers.values()) {

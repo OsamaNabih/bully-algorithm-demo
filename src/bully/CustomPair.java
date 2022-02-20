@@ -2,6 +2,7 @@ package bully;
 
 import java.net.Socket;
 
+// Just a simple pair class for our usage
 public class CustomPair {
 	public CustomPair(Socket socket, Message msg) {
 		super();
