@@ -1,6 +1,7 @@
 # bully-algorithm-demo
 Java implementation of the Bully Algorithm for determining a Coordinator in a distributed network. <br>
 All configuration is defined inside "Consts.java" file.
+
 ## Limitations/Assumptions
 - There's a finite number of N nodes (where N can be arbitrarily large).
 - Each node knows the range of ports the nodes occupy (by defining a start port and max number of nodes variables).
@@ -26,7 +27,7 @@ All configuration is defined inside "Consts.java" file.
 - When a node receives an <b>ANSWER</b> message from a process with higher PID, it stops sending <b>ELECTION</b> messages (stops electing itself), and waits for a <b>VICTORY</b> message. If no <b>VICTORY</b> message arrives, it re-starts the election process.
 - If a node send an <b>ELECTION</b> message and receives no <b>ANSWER</b> messages, it becomes the new _coordinator_ and broadcasts a <b>VICTORY</b> message to all nodes (implemented in a threading manner).
 - Any node that receives a <b>VICTORY</b> message treats the sender as the _coordinator_
-- Once a new _coordinator_ is announced, it generates random N numbers and splits them into chunks, sending 1 chunk to each process in a <b>TASK</b> message.
+- Once a new _coordinator_ is announced, it generates random N numbers and splits them evenly into chunks, sending 1 chunk to each process in a <b>TASK</b> message.
 - The processes calculate the minimum number in their chunks by spawning a separate thread for this task, and send the result to the coordinator in a <b>TASK_REPLY</b> message.
 
 ## Accounting for failures
@@ -36,6 +37,7 @@ All configuration is defined inside "Consts.java" file.
     <li><b>Coordinator crashing:</b> All nodes have a timer, if they don't receive an <b>ALIVE</b> message during this time, they assume coordinator is dead, and a new election is started (by many nodes simultaneously)</li>
     <li><b>New coordinator crashing before sending victory:</b> Each node starts a timer when it receives an <b>ANSWER</b> from a node with higher PID and is thus awaiting a victory. If no victory is received, it starts a new election</li>
 </ol>
+
 ## Typical Flow
 <ol>
     <li> A new node process is started. </li>
@@ -49,3 +51,39 @@ All configuration is defined inside "Consts.java" file.
     <li> Coordinator receives the minimum of each chunk and calculates the global array minimum and displays it. </li>
     <li> Steady state is reached. </li>
 </ol>
+
+## Testing
+- Tested with several number of nodes (up to 10).
+- Tested with relatively large arrays (up to 10K), any more than that the terminal gets flooded and timeouts occur due to receiver thread taking a long time to process the message content.
+- Tested new node entering the network the highest PID.
+- Testing any node failing at any time.
+- Tested coordinator failing.
+- Tested starting a new node at several stages of our flow.
+
+## Running Instructions
+Run the bully-algorithm-Osama-Nabih.jar file in any command line terminal using. <br>
+```
+java -jar bully-algorithm-Osama-Nabih 
+```
+You can run as many instances as you'd like
+
+## Killing the coordinator
+We can simply terminate any process, including the coordinator, by pressing Ctrl + C in the terminal, or closing the terminal window.
+
+## Understanding the output
+Each message is logged in the following format
+```
+Node <process_pid> received at <timestamp> Message [type=<msg_type>, senderPort=<msg_sender_port>, senderPid=<msg_sender_pid>, content=<msg_content>]
+```
+Important information is also logged, such as
+- Any timeout.
+- Any failing process.
+- Starting a new election.
+- Peers' discovery.
+- Winning the elections.
+- Becoming the coordinator.
+- Victory broadcast.
+- Starting the task.
+
+## Output Example
+![image info](./pictures/Example.png)
