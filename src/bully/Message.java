@@ -1,17 +1,11 @@
 package bully;
 
-import java.sql.Timestamp;
-
 public class Message {
 	private MessageType type;
 	private int senderPort;
 	//private long timestamp;
 	private String senderPid;
 	
-	
-	private long getCurrTimestamp() {
-		return new Timestamp(System.currentTimeMillis()).getTime();
-	}
 	
 	public Message(String response) {
 		String[] fields = response.split(",");

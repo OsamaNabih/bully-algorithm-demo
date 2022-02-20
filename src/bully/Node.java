@@ -1,9 +1,6 @@
 package bully;
 
-import java.net.Socket;
-import java.util.Date;
 import java.sql.Timestamp;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -19,16 +16,12 @@ public class Node {
 	NodeState state;
 	public  Map<Integer,Peer> peers = new ConcurrentHashMap<>();
 	long pid;
-	int sentElectionsCount = 0;
-	int receivedElectionsCount = 0;
 	Peer coordinator;
 	boolean isCoordinator = false;
-	long victoryTimer;
+	AtomicLong lastPendingVictoryTime = new AtomicLong(0);
 	AtomicLong lastAliveTime = new AtomicLong(0);
-	boolean finishedDiscovery = false;
-	boolean spawnedTimeoutCheckerThread = false;
-	boolean spawnedVictoryTimeoutThread = false;
 	Thread aliveTimeoutCheckerThread = null;
+	Timer victoryTimer = null;
 	boolean isLargest = true;
 	List<Thread> aliveThreads = new ArrayList<>();
 	
@@ -37,12 +30,8 @@ public class Node {
 		return new Timestamp(System.currentTimeMillis()).getTime();
 	}
 	
-	private String getTimeNow() {
-		return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new Date());
-	}
-	
 	Node() {
-		transitionToInit();
+		this.state = NodeState.INIT;
 		this.pid = ProcessHandle.current().pid();
 		System.out.println("------------------------------------------------------------");
 		System.out.println("New process started with pid " + String.valueOf(pid));
@@ -51,53 +40,37 @@ public class Node {
 	
 	void start() {
 		// Acquire a new socket
-		mySocket = new Network();
-
-		while(true) {
-			if (state == NodeState.INIT) {
-				spawnReceiverThread();
-				discoverPeers();
-				exitCurrentState();
-				transitionToRunning();
-			}
-			if (state == NodeState.RUNNING) {
-				//System.out.println("Running " + spawnedTimeoutCheckerThread);
-//				if (spawnedTimeoutCheckerThread == false)
-//					spawnAliveTimeoutCheckerThread();
-			}
-			if (state == NodeState.ELECTING) {
-				//initElections();
-			}
-			if (state == NodeState.PENDING_VICTORY) {
-//				if (spawnedVictoryTimeoutThread == false)
-//					spawnVictoryTimeoutThread();
-			}
-			if (state == NodeState.COORDINATING) { // Periodically send ALIVE to all peers
-//				sendAlive();
-//				receiveMessages();
-			}
+		try {
+			mySocket = new Network();
+		} catch (Exception e) {
+			System.out.println(e.getMessage());
+			System.out.println("Terminating process");
+			return;
 		}
-	}
-	
-	void spawnReceiverThread() {
-		Node node = this;
 		Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {
-            	while(true) {
-            		CustomPair pair = mySocket.receive();
-            		if (pair == null)
-            			continue;
-            		Message responseMsg = getMessageResponse(pair.msg);
-            		// It will only be null in case of receiving an ELECTION msg
-            		if (responseMsg != null)
-            			mySocket.send(pair.socket, responseMsg);
-            		updateState(pair.msg);
-            	}
-            }
+            	discoverPeers();
+            	transitionToRunning();
+        	}
         });
-		//System.out.println("Started receiver thread");
 		thread.start();
+		listen();
+	}
+	
+	public void listen() {
+		while(true) {
+    		CustomPair pair = mySocket.receive();
+    		if (pair == null)
+    			continue;
+    		System.out.println("Node " + this.pid + " received at " + getCurrTimestamp() + ", " + pair.msg.print());
+    			
+    		Message responseMsg = getMessageResponse(pair.msg);
+    		// It will only be null in case of receiving an ELECTION msg
+    		if (responseMsg != null)
+    			mySocket.send(pair.socket, responseMsg);
+    		updateState(pair.msg);
+    	}
 	}
 	
 	public void updateState(Message receivedMsg) {
@@ -117,6 +90,7 @@ public class Node {
 //				else
 				if (senderPid < this.pid && state != NodeState.ELECTING) {
 					exitCurrentState();
+					System.out.println("Received ELECTION from node with lower pid: " + senderPid);
 					transitionToElecting();
 				}
 				break;
@@ -177,58 +151,7 @@ public class Node {
 			}
 		return null;
 	}
-	
-	public Message getAppropriateResponse(Message receivedMsg) {
-		long senderPid = Long.valueOf(receivedMsg.getSenderPid());
-		int senderPort = Integer.valueOf(receivedMsg.getSenderPort());
-		if (!peers.containsKey(senderPort)) {
-			addPeer(new Peer(senderPort, senderPid));
-		}
-		System.out.println("Picking proper response for msg " + receivedMsg.print());
-		switch (receivedMsg.getType()) {
-			case GREETING: {
-				System.out.println("Received GREETING, replying with OK");
-				Message sentMsg = new Message(MessageType.OK, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid));
-				//addPeer(new Peer(senderPort, senderPid));
-				return sentMsg;
-			}
-			case ALIVE: {
-	//			if (state == NodeState.RUNNING)
-				System.out.println("Received ALIVE, replying with OK");
-				this.lastAliveTime.set(getCurrTimestamp());
-				Message sentMsg = new Message(MessageType.OK, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid));
-				return sentMsg;
-			}
-			case ELECTION: {
-				System.out.println("Received ELECTION, replying with ANSWER");
-				Message sentMsg = new Message(MessageType.ANSWER, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid));
-				if (senderPid > this.pid && state != NodeState.PENDING_VICTORY) {
-					exitCurrentState();
-					transitionToPendingVictory();
-				}
-				else if (state != NodeState.ELECTING) {
-					exitCurrentState();
-					transitionToElecting();
-				}
-				return sentMsg;
-			}
-			
-			case VICTORY: {
-				coordinator = new Peer(senderPort, senderPid);
-				this.isCoordinator = false;
-				Message sentMsg = new Message(MessageType.OK, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid));
-				return sentMsg;
-			}
-			case ANSWER: // Will never happen as no node initiates sending an ANSWER
-				break;
-			case OK: // Will never happen as no node initiates sending an OK
-				break;
-			default:
-				break;
-			}
-		return null;
-	}
-	
+		
 	// This function iterates over all possibly occupied ports
 	// If it receives an answer, it adds the peer at that port to our list of peers
 	// After all threads are done, it sets the finishDiscovery flag to indicate we are ready in case of an election
@@ -248,7 +171,6 @@ public class Node {
 			i++;
 		}
 		waitAllThreads(discoveryThreads);
-		this.finishedDiscovery = true;
 		System.out.println("Discovered " + peers.size() + " peers");
 	}
 	
@@ -293,10 +215,11 @@ public class Node {
             			long currTime = getCurrTimestamp();
             			Long last = node.lastAliveTime.get();
             			if ((currTime - last) > Consts.coordinatorDeadTimeout) {
-            				System.out.println("Coordinator is down, timestamp: " + getCurrTimestamp() + " " + last);
+            				System.out.println("COORDINATOR ALIVE TIMED OUT");
             				long highestPid = node.getHighestPid();
             				if (highestPid == node.pid) {
             					exitCurrentState();
+            					System.out.println("This node has the new highest pid: " + node.pid + ", becoming new coordinator");
             					node.transitionToCoordinating();
             					return;
             				}
@@ -359,6 +282,7 @@ public class Node {
 			return;
 		}
 		exitCurrentState();
+		System.out.println("This node with pid: " + this.pid + " won the elections");
 		transitionToCoordinating();
 			
 	}
@@ -438,7 +362,8 @@ public class Node {
 	}
 	
 	
-	void spawnVictoryTimeoutThread() {
+	Timer spawnVictoryTimeoutThread() {
+		//System.out.println("Spawning victory timeout thread");
 		Timer timer = new Timer();
 		Node node = this;
 		TimerTask victoryTimeout = new TimerTask() {
@@ -451,7 +376,7 @@ public class Node {
 				// To avoid the case of changing states quickly 
 				// To coordinating, then electing, then again to pending victory
 				// Then this timer expires as it was spawned from the previous time we were in pending victory
-				if (node.state == NodeState.PENDING_VICTORY && (node.getCurrTimestamp() - victoryTimer) > Consts.pendingVictoryTimeout) {
+				if (node.state == NodeState.PENDING_VICTORY && (node.getCurrTimestamp() - lastPendingVictoryTime.get()) > Consts.pendingVictoryTimeout) {
 					System.out.println("Pending victory timed out, starting new election");
 					exitCurrentState();
 					node.transitionToElecting();
@@ -460,7 +385,8 @@ public class Node {
 			}
 		};
 		timer.schedule(victoryTimeout, Consts.victoryTimeout);
-		//System.out.println("Spawning victory timeout thread");
+		return timer;
+		
 	}
 	
 	Thread spawnVictoryThread(int targetPort, Message msg) {
@@ -547,38 +473,21 @@ public class Node {
 	void sendAlive() {
 		System.out.println("Sending periodic ALIVE to all peers");
 		Message msg = new Message(MessageType.ALIVE, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid));
-//		int timeout = Consts.aliveTimeout;
-//		Node node = this;
 		for (Peer peer : peers.values()) {
 			Thread aliveThread = spawnAliveThread(peer.getPort(), msg);
             aliveThreads.add(aliveThread);
         }
 	}
 	
-	void transitionToInit() {
-		//System.out.println("Transitioning to state: INIT");
-		state = NodeState.INIT;
-		
-	}
-	
-	void exitInit() {
-		while(!finishedDiscovery);
-	}
-	
 	void transitionToRunning() {
 		//System.out.println("Transitioning to state: RUNNING");
 		state = NodeState.RUNNING;
-		spawnedTimeoutCheckerThread = false;
-//		if (aliveTimeoutCheckerThread != null)
-//			aliveTimeoutCheckerThread.interrupt();
 		spawnAliveTimeoutCheckerThread();
-		spawnedTimeoutCheckerThread = true;
 	}
 	
 	void exitRunning() {
 		aliveTimeoutCheckerThread.interrupt();
 		//System.out.println("-------------------------------");
-		spawnedTimeoutCheckerThread = false;
 	}
 	
 	void transitionToElecting() {
@@ -592,27 +501,25 @@ public class Node {
 	}
 	
 	void exitElecting() {
-		
+		return;
 	}
 	
 	
 	void transitionToPendingVictory() {
-		if (aliveTimeoutCheckerThread != null)
-			aliveTimeoutCheckerThread.interrupt();
-		spawnedVictoryTimeoutThread = false;
 		//System.out.println("Transitioning to state: PENDING VICTORY");
-		victoryTimer = getCurrTimestamp();
-		spawnVictoryTimeoutThread();
-		spawnedVictoryTimeoutThread = true;
+		System.out.println("Process is now awaiting victory message");
+		lastPendingVictoryTime.set(getCurrTimestamp());
+		this.victoryTimer = spawnVictoryTimeoutThread();
 	}
 	
 	void exitPendingVictory() {
-		spawnedVictoryTimeoutThread = false;
+		this.victoryTimer.cancel();
 	}
 	
 	
 	void transitionToCoordinating() {
-		System.out.println("COORDINATING");
+		
+		System.out.println("Becoming the COORDINATOR");
 		this.isCoordinator = true;
 		state = NodeState.COORDINATING;
 		broadcastVictory();
@@ -628,26 +535,25 @@ public class Node {
 	
 	void exitCurrentState() {
 		switch(this.state) {
-		case INIT: {
-			exitInit();
-			break;
-		}
-		case RUNNING: {
-			exitRunning();
-			break;
-		}
-		case ELECTING: {
-			exitElecting();
-			break;
-		}
-		case PENDING_VICTORY: {
-			exitPendingVictory();
-			break;
-		}
-		case COORDINATING: {
-			exitCoordinating();
-			break;
-		}
+			case INIT: {
+				break;
+			}
+			case RUNNING: {
+				exitRunning();
+				break;
+			}
+			case ELECTING: {
+				exitElecting();
+				break;
+			}
+			case PENDING_VICTORY: {
+				exitPendingVictory();
+				break;
+			}
+			case COORDINATING: {
+				exitCoordinating();
+				break;
+			}
 		}
 		return;
 	}

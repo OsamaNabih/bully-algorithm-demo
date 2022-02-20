@@ -5,37 +5,33 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.sql.Timestamp;
 
 public class Network {
 	String address = Consts.ip;
 	int port;
 	ServerSocket receiverSocket = null;
 	
-	Network() {
+	Network() throws Exception {
 		acquireOrdinaryPort();
 	}
 	
-	public void acquireOrdinaryPort() {
+	public void acquireOrdinaryPort() throws Exception {
 		int i = Consts.startingPort;
-		boolean acquiredPort = false;
-		while(!acquiredPort && i < Consts.startingPort + Consts.maxNumOfNodes) {
+		while(i < Consts.startingPort + Consts.maxNumOfNodes) {
 			try {
 				bind(i);
-				acquiredPort = true;
 				System.out.println("Acquired port " + String.valueOf(i));
+				return;
 			} catch(Exception e) {
 				//System.out.println("Error: " + e.toString());
 				//System.out.println("Failed to acquire port " + String.valueOf(i));
 				i++;
 			}
 		}
+		throw new Exception("No empty ports available");
 	}
 	
-	private long getCurrTimestamp() {
-		return new Timestamp(System.currentTimeMillis()).getTime();
-	}
-	
+
 	private void bind(int port) throws IOException {
 		this.receiverSocket = new ServerSocket(port);
 	}
@@ -52,7 +48,7 @@ public class Network {
 			DataInputStream receivedDataStream = new DataInputStream(s.getInputStream());
 			String receivedData = receivedDataStream.readUTF();
 			Message receivedMsg = new Message(receivedData);
-			System.out.println("timestamp: " + getCurrTimestamp() + ", Received :  " + receivedMsg.print());
+			
 			CustomPair pair = new CustomPair(s, receivedMsg);
 			return pair;
 		} catch (Exception e) {
@@ -72,26 +68,6 @@ public class Network {
 		}
 	}
 	
-	public Message receiveAndSend(Node node, int timeout) {
-		try {
-			Socket s= receiverSocket.accept(); 
-            DataInputStream receivedDataStream = new DataInputStream(s.getInputStream());
-            DataOutputStream sentDataStream = new DataOutputStream(s.getOutputStream());
-            //System.out.println("Receiving and sending");
-            String receivedData = receivedDataStream.readUTF();
-            Message receivedMsg = new Message(receivedData);
-            //System.out.println("Received message :  " + receivedMsg.print() + " from " + receivedMsg.getSenderPort());
-            Message sentMsg = node.getAppropriateResponse(receivedMsg);
-            //System.out.println("Responded with " + sentMsg.print() + " to " + receivedMsg.getSenderPort());
-            sentDataStream.writeUTF(sentMsg.toString());
-            sentDataStream.flush();
-            sentDataStream.close();
-            receivedDataStream.close();
-            return receivedMsg;
-		} catch (Exception e) {
-			return null;
-		}
-	}
 	
 	public Message sendAndReceive(String targetAddress, int targetPort, Message msg, int timeout) {
 		try {
