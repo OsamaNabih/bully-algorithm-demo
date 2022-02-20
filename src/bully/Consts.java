@@ -21,8 +21,8 @@ public class Consts {
 	
 	public static int victoryTimeout = generalTimeout;
 	public static int acquireSocketTimeout = generalTimeout;
-	public static int electionTimeout = generalTimeout / 2;
-	public static int greetingTimeout = generalTimeout / 2;
+	public static int electionTimeout = generalTimeout*2;
+	public static int greetingTimeout = generalTimeout;
 	public static int pendingVictoryTimeout = generalTimeout * 2;
 	public static int aliveTimeout = generalTimeout;
 	//public static int taskTimeout = (waitingForTaskResponseTimeout / maxNumOfNodes);

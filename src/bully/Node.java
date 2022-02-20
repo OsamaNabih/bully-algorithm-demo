@@ -547,7 +547,7 @@ public class Node {
 		return randomInts;
 	}
 	
-	Thread spawnTaskThread(Peer targetPeer, List<Integer> nums) {
+	Thread spawnTaskThread(Peer targetPeer, List<Integer> nums, List<Peer> failedPeers) {
 		String chunk = buildNumsString(nums);
 		Message msg = new Message(MessageType.TASK, mySocket.getReceiverSocket().getLocalPort(), String.valueOf(this.pid), chunk);
 		Thread thread = new Thread(new Runnable() {
@@ -559,8 +559,8 @@ public class Node {
 				// Don't need to remove the failed peer as the alive thread handles that
 				// So we just return
 				if (responseMsg == null) {
-					System.out.println("Peer " + targetPeer.getPort() + " has failed");
-					removePeer(targetPeer);
+					//System.out.println("Peer " + targetPeer.getPort() + " has failed");
+					failedPeers.add(targetPeer);
 					return;
 				}
 				// If we receive a reply, then the task was sent successfully
@@ -583,7 +583,8 @@ public class Node {
 	}
 	
 	void spawnTaskCoordinatorThread() {
-		//System.out.println("Sending task to peers");
+		System.out.println("Sending task to peers");
+		List<Peer> failedPeers = new ArrayList<Peer>();
 		Thread thread = new Thread(new Runnable() {
 			@Override
 			public void run() {
@@ -606,7 +607,7 @@ public class Node {
 					if (startIdx >= randomNums.size()) // more processes than nums
 						break;
 					List<Integer> chunk = randomNums.subList(startIdx, endIdx);
-					Thread taskThread = spawnTaskThread(peer, chunk);
+					Thread taskThread = spawnTaskThread(peer, chunk, failedPeers);
 					taskThreads.add(taskThread);
 					peerIdx += 1;
 				}
@@ -617,6 +618,14 @@ public class Node {
 						// TODO Auto-generated catch block
 						//e.printStackTrace();
 					}
+				}
+				
+				// Once we're done, remove all failed peers
+				// Note we don't remove them in the threads to avoid Concurrent Modification Exception
+				// Because a thread is altering our peers map as we are iterating through it
+				// in the coordinator thread
+				for(Peer peer : failedPeers) {
+					removePeer(peer);
 				}
 				// Any task reply sent after this time is ignored
 				// The answer is considered the minimum response we received till that deadline
@@ -636,6 +645,13 @@ public class Node {
 	
 	void spawnFindMinThread(Message receivedMsg) {
 		this.chunkMin = Consts.maxInt;
+		// This sleep is to give the user running the simulator a chance to kill nodes after task was sent
+		try {
+			Thread.sleep(5000);
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 		Thread findMinThread = new Thread(new Runnable() {
 			@Override
 			public void run() {
