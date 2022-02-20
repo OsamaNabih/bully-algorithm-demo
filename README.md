@@ -91,4 +91,5 @@ Important information is also logged, such as
 
 ## NOTES
 I made decent refactoring effort to the code, by making a <b>State</b> abstract class and having <b>Init, Running, Electing, PendingVictory, and Coordinating</b> inherit from it, hence splitting the logic of each state entirely. <br>
-This resulted in a <b>much</b> cleaner code, unfortunately I didn't have the time to test it.
+This resulted in a <b>much</b> cleaner code, unfortunately I didn't have the time to test it.<br>
+You can find that code in the _refactoring_ branch.
